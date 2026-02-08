@@ -16,11 +16,23 @@ function publicUser(userRow) {
   return rest;
 }
 
+async function getImportedStudent(email) {
+  try {
+    const student = await db.query(
+      'SELECT email, full_name, grade, school_name FROM students WHERE email = $1 LIMIT 1',
+      [email],
+    );
+    return student.rows[0] ?? null;
+  } catch (_) {
+    return null;
+  }
+}
+
 exports.signup = async (req, res) => {
   const { email, password, schoolName, grade, name } = req.body;
 
-  if (!email || !password || !schoolName || !grade || !name) {
-    return res.status(400).json({ error: 'All fields (email, password, schoolName, grade, name) are required' });
+  if (!email || !password || !schoolName || !name) {
+    return res.status(400).json({ error: 'All fields (email, password, schoolName, name) are required' });
   }
 
   try {
@@ -33,15 +45,29 @@ exports.signup = async (req, res) => {
       return res.status(400).json({ error: 'User already exists' });
     }
 
+    const importedStudent = await getImportedStudent(emailNorm);
+    const resolvedGrade = String(importedStudent?.grade ?? grade ?? '').trim();
+    if (!resolvedGrade) {
+      return res.status(400).json({ error: 'Grade is required (or import student CSV first)' });
+    }
+
+    const resolvedName = String(name || importedStudent?.full_name || 'Student').trim();
+    const resolvedSchool = String(importedStudent?.school_name || schoolName).trim();
+
     const passwordHash = hashPassword(password);
     const newUser = await db.query(
       'INSERT INTO users (email, password, school_name, grade, full_name) VALUES ($1, $2, $3, $4, $5) RETURNING id, email, full_name, school_name, grade',
-      [emailNorm, passwordHash, schoolName, String(grade), name]
+      [emailNorm, passwordHash, resolvedSchool, resolvedGrade, resolvedName]
     );
 
     const user = newUser.rows[0];
     const token = signToken({ sub: user.id }, getAuthSecret());
-    res.status(201).json({ message: 'User created successfully', token, user });
+    res.status(201).json({
+      message: 'User created successfully',
+      token,
+      user,
+      gradeSource: importedStudent ? 'students_csv' : 'signup_input',
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
