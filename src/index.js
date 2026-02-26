@@ -8,9 +8,14 @@ const authRoutes = require('./routes/authRoutes');
 const gameRoutes = require('./routes/gameRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const { ensureCoreTables } = require('./config/bootstrap');
+const { initSocket } = require('./socket/gameSocket');
+const http = require('http');
 
 const app = express();
+const server = http.createServer(app);
 const PORT = process.env.PORT || 3000;
+
+initSocket(server);
 
 app.disable('x-powered-by');
 const defaultAllowedOrigins = [
@@ -64,7 +69,7 @@ app.use((err, req, res, next) => {
 async function startServer() {
   try {
     await ensureCoreTables();
-    app.listen(PORT, () => {
+    server.listen(PORT, () => {
       console.log(`Server is running on port ${PORT}`);
     });
   } catch (error) {
