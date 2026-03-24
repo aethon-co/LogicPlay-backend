@@ -1,11 +1,10 @@
 const https = require('https');
 
 /**
- * Deliver an OTP via a 2Factor.in VOICE CALL — the user receives an automated
- * phone call that reads out their OTP digits.
+ * Send an OTP via 2Factor.in SMS — cheapest reliable SMS OTP for Indian numbers.
  *
  * API endpoint:
- *   GET https://2factor.in/API/V1/{API_KEY}/VOICE/{PHONE}/{OTP}
+ *   GET https://2factor.in/API/V1/{API_KEY}/SMS/{PHONE}/{OTP}
  *
  * Returns a promise that resolves to true on success, throws on failure.
  *
@@ -30,8 +29,8 @@ async function sendOtpViaTwoFactor(phone, otp) {
   }
 
   const normalized = normalizeIndianNumber(phone);
-  // VOICE call — 2Factor will call the number and read out the OTP digits
-  const url = `https://2factor.in/API/V1/${apiKey}/VOICE/${normalized}/${otp}`;
+  // SMS — 2Factor sends a text message with the OTP
+  const url = `https://2factor.in/API/V1/${apiKey}/SMS/${normalized}/${otp}/LogicPlay`;
 
   return new Promise((resolve, reject) => {
     https.get(url, (res) => {
@@ -43,14 +42,14 @@ async function sendOtpViaTwoFactor(phone, otp) {
           if (json.Status === 'Success') {
             resolve(true);
           } else {
-            reject(new Error(`Voice call failed: ${json.Details || 'Unknown error'}`));
+            reject(new Error(`SMS send failed: ${json.Details || 'Unknown error'}`));
           }
         } catch {
-          reject(new Error('Invalid response from voice OTP gateway.'));
+          reject(new Error('Invalid response from SMS gateway.'));
         }
       });
     }).on('error', (err) => {
-      reject(new Error(`Voice OTP request failed: ${err.message}`));
+      reject(new Error(`SMS gateway request failed: ${err.message}`));
     });
   });
 }
