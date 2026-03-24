@@ -1,7 +1,10 @@
 const db = require('./db');
 
 async function ensureCoreTables() {
-  await db.query('CREATE EXTENSION IF NOT EXISTS pgcrypto');
+  // pgcrypto is pre-installed on Supabase; ignore if already exists
+  try {
+    await db.query('CREATE EXTENSION IF NOT EXISTS pgcrypto');
+  } catch (_) {}
 
   await db.query(`
     CREATE TABLE IF NOT EXISTS public.users (
