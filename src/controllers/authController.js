@@ -1,5 +1,7 @@
 const db = require('../config/db');
 const { hashPassword, verifyPassword, signToken } = require('../utils/security');
+const { generateOtp, saveOtp, canResend, verifyOtp: verifyOtpInStore } = require('../utils/otpStore');
+const { sendOtpViaTwoFactor, normalizeIndianNumber } = require('../utils/smsSender');
 
 function normalizeEmail(email) {
   if (typeof email !== 'string') return '';
@@ -28,8 +30,63 @@ async function getImportedStudent(email) {
   }
 }
 
+// ─── OTP: Send ─────────────────────────────────────────────────────────────
+
+exports.sendOtp = async (req, res) => {
+  const { phone } = req.body;
+  if (!phone) {
+    return res.status(400).json({ error: 'Phone number is required.' });
+  }
+
+  let normalized;
+  try {
+    normalized = normalizeIndianNumber(phone);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+
+  if (!canResend(normalized)) {
+    return res.status(429).json({ error: 'Please wait 30 seconds before requesting a new OTP.' });
+  }
+
+  const otp = generateOtp();
+  saveOtp(normalized, otp);
+
+  try {
+    await sendOtpViaTwoFactor(normalized, otp);
+    return res.status(200).json({ message: 'OTP sent successfully.' });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+// ─── OTP: Verify ───────────────────────────────────────────────────────────
+
+exports.verifyOtp = async (req, res) => {
+  const { phone, otp } = req.body;
+  if (!phone || !otp) {
+    return res.status(400).json({ error: 'Phone and OTP are required.' });
+  }
+
+  let normalized;
+  try {
+    normalized = normalizeIndianNumber(phone);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+
+  const result = verifyOtpInStore(normalized, otp);
+  if (!result.valid) {
+    return res.status(400).json({ error: result.reason });
+  }
+
+  return res.status(200).json({ message: 'OTP verified successfully.', verified: true });
+};
+
+// ─── Signup ────────────────────────────────────────────────────────────────
+
 exports.signup = async (req, res) => {
-  const { email, password, schoolName, grade, name } = req.body;
+  const { email, password, schoolName, grade, name, phone } = req.body;
 
   if (!email || !password || !schoolName || !name) {
     return res.status(400).json({ error: 'All fields (email, password, schoolName, name) are required' });
@@ -55,9 +112,16 @@ exports.signup = async (req, res) => {
     const resolvedSchool = String(importedStudent?.school_name || schoolName).trim();
 
     const passwordHash = hashPassword(password);
+
+    // Normalize phone if provided
+    let phoneNorm = null;
+    if (phone) {
+      try { phoneNorm = normalizeIndianNumber(phone); } catch (_) {}
+    }
+
     const newUser = await db.query(
-      'INSERT INTO users (email, password, school_name, grade, full_name) VALUES ($1, $2, $3, $4, $5) RETURNING id, email, full_name, school_name, grade',
-      [emailNorm, passwordHash, resolvedSchool, resolvedGrade, resolvedName]
+      'INSERT INTO users (email, password, school_name, grade, full_name, phone) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, email, full_name, school_name, grade, phone',
+      [emailNorm, passwordHash, resolvedSchool, resolvedGrade, resolvedName, phoneNorm]
     );
 
     const user = newUser.rows[0];
@@ -69,9 +133,31 @@ exports.signup = async (req, res) => {
       gradeSource: importedStudent ? 'students_csv' : 'signup_input',
     });
   } catch (error) {
+    // If phone column doesn't exist yet, fall back without phone
+    if (error.message && error.message.includes('column "phone" of relation "users" does not exist')) {
+      try {
+        const emailNorm = normalizeEmail(email);
+        const importedStudent = await getImportedStudent(emailNorm);
+        const resolvedGrade = String(importedStudent?.grade ?? grade ?? '').trim();
+        const resolvedName = String(name || importedStudent?.full_name || 'Student').trim();
+        const resolvedSchool = String(importedStudent?.school_name || schoolName).trim();
+        const passwordHash = hashPassword(password);
+        const newUser = await db.query(
+          'INSERT INTO users (email, password, school_name, grade, full_name) VALUES ($1, $2, $3, $4, $5) RETURNING id, email, full_name, school_name, grade',
+          [emailNorm, passwordHash, resolvedSchool, resolvedGrade, resolvedName]
+        );
+        const user = newUser.rows[0];
+        const token = signToken({ sub: user.id }, getAuthSecret());
+        return res.status(201).json({ message: 'User created successfully', token, user });
+      } catch (fallbackErr) {
+        return res.status(500).json({ error: fallbackErr.message });
+      }
+    }
     res.status(500).json({ error: error.message });
   }
 };
+
+// ─── Login ─────────────────────────────────────────────────────────────────
 
 exports.login = async (req, res) => {
   const { email, password } = req.body;
