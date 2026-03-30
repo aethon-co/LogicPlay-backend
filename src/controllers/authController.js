@@ -1,7 +1,7 @@
 const db = require('../config/db');
 const { hashPassword, verifyPassword, signToken } = require('../utils/security');
 const { generateOtp, saveOtp, canResend, verifyOtp: verifyOtpInStore } = require('../utils/otpStore');
-const { sendOtpViaTwoFactor, normalizeIndianNumber } = require('../utils/smsSender');
+const { sendOtpViaWhatsApp, normalizeIndianNumber } = require('../utils/whatsappSender');
 
 function normalizeEmail(email) {
   if (typeof email !== 'string') return '';
@@ -16,6 +16,12 @@ function publicUser(userRow) {
   if (!userRow) return null;
   const { password, ...rest } = userRow;
   return rest;
+}
+
+function maskPhone(phone) {
+  const value = String(phone || '').trim();
+  if (value.length < 4) return 'unknown';
+  return `${value.slice(0, 2)}******${value.slice(-2)}`;
 }
 
 async function getImportedStudent(email) {
@@ -42,20 +48,25 @@ exports.sendOtp = async (req, res) => {
   try {
     normalized = normalizeIndianNumber(phone);
   } catch (err) {
+    console.warn('[auth/send-otp] invalid phone', { phone: maskPhone(phone), error: err.message });
     return res.status(400).json({ error: err.message });
   }
 
   if (!canResend(normalized)) {
+    console.warn('[auth/send-otp] resend throttled', { phone: maskPhone(normalized) });
     return res.status(429).json({ error: 'Please wait 30 seconds before requesting a new OTP.' });
   }
 
   const otp = generateOtp();
   saveOtp(normalized, otp);
+  console.info('[auth/send-otp] sending OTP', { phone: maskPhone(normalized) });
 
   try {
-    await sendOtpViaTwoFactor(normalized, otp);
-    return res.status(200).json({ message: 'OTP sent successfully.' });
+    await sendOtpViaWhatsApp(normalized, otp);
+    console.info('[auth/send-otp] OTP sent', { phone: maskPhone(normalized) });
+    return res.status(200).json({ message: 'OTP sent successfully on WhatsApp.' });
   } catch (err) {
+    console.error('[auth/send-otp] OTP send failed', { phone: maskPhone(normalized), error: err.message });
     return res.status(500).json({ error: err.message });
   }
 };

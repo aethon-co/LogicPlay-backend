@@ -15,6 +15,17 @@ const QUESTIONS = [
   { question: "What is the fastest land animal?", options: ["Cheetah", "Lion", "Horse", "Eagle"], answer: 0 },
 ];
 
+const QUESTION_TIME_LIMIT_MS = 10000;
+
+function calculateMultiplayerPoints(timeTakenMs, { firstCorrect = false } = {}) {
+  const safeTime = Math.max(0, Math.min(timeTakenMs, QUESTION_TIME_LIMIT_MS));
+  const speedPoints = Math.max(
+    20,
+    Math.round(80 * (1 - safeTime / QUESTION_TIME_LIMIT_MS)),
+  );
+  return speedPoints + (firstCorrect ? 25 : 0);
+}
+
 function shuffle(array) {
   let currentIndex = array.length,  randomIndex;
   while (currentIndex != 0) {
@@ -57,8 +68,8 @@ function initSocket(server) {
         rooms.set(roomId, {
           id: roomId,
           players: [
-            { id: player1.id, userId: player1.userId, name: player1.name, score: 0, answered: false, lastAnswerIndex: -1 },
-            { id: player2.id, userId: player2.userId, name: player2.name, score: 0, answered: false, lastAnswerIndex: -1 }
+            { id: player1.id, userId: player1.userId, name: player1.name, score: 0, answered: false, lastAnswerIndex: -1, answeredAt: null },
+            { id: player2.id, userId: player2.userId, name: player2.name, score: 0, answered: false, lastAnswerIndex: -1, answeredAt: null }
           ],
           currentQuestionIndex: 0,
           questions: gameQuestions,
@@ -100,20 +111,18 @@ function initSocket(server) {
 
       player.answered = true;
       player.lastAnswerIndex = answerIndex;
+      player.answeredAt = Date.now();
       const currentQuestion = room.questions[room.currentQuestionIndex];
       
       if (answerIndex === currentQuestion.answer) {
-        // Calculate points based on time (max 100, min 10)
-        const timeTaken = Date.now() - room.questionStartTime;
-        const maxTime = 10000; // 10 seconds
-        let points = Math.max(10, Math.floor(100 * (1 - timeTaken / maxTime)));
-        
-        // First to answer correctly gets a bonus
-        const otherPlayer = room.players.find(p => p.id !== socket.id);
-        if (!otherPlayer.answered || otherPlayer.lastAnswerIndex !== currentQuestion.answer) {
-           points += 50; // Bonus for being first correct
-        }
-        
+        const timeTaken = player.answeredAt - room.questionStartTime;
+        const firstCorrect = !room.players.some(
+          (p) =>
+            p.id !== player.id &&
+            p.lastAnswerIndex === currentQuestion.answer &&
+            typeof p.answeredAt === 'number',
+        );
+        const points = calculateMultiplayerPoints(timeTaken, { firstCorrect });
         player.score += points;
       }
 
@@ -200,6 +209,7 @@ async function sendNextQuestion(io, roomId) {
   room.players.forEach(p => {
     p.answered = false;
     p.lastAnswerIndex = -1;
+    p.answeredAt = null;
   });
 
   const question = room.questions[room.currentQuestionIndex];
@@ -214,7 +224,7 @@ async function sendNextQuestion(io, roomId) {
 
   room.timer = setTimeout(() => {
     endQuestion(io, roomId);
-  }, 10000);
+  }, QUESTION_TIME_LIMIT_MS);
 }
 
 async function endQuestion(io, roomId) {
