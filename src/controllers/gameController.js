@@ -78,6 +78,25 @@ exports.getGamesByGrade = async (req, res) => {
   }
 };
 
+exports.getAvailableGrades = async (req, res) => {
+  try {
+    const { rows } = await db.query(
+      `SELECT DISTINCT COALESCE(NULLIF(grade_level, ''), NULLIF(grade, '')) AS grade_value
+       FROM games
+       WHERE COALESCE(NULLIF(grade_level, ''), NULLIF(grade, '')) IS NOT NULL
+       ORDER BY grade_value ASC`
+    );
+
+    const grades = rows
+      .map((row) => String(row.grade_value || '').trim())
+      .where((grade) => grade.isNotEmpty);
+
+    res.status(200).json({ grades });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
 exports.getAllGames = async (req, res) => {
     try {
         const { rows } = await db.query('SELECT * FROM games ORDER BY created_at ASC NULLS LAST');
